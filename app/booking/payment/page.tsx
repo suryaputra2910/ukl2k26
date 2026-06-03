@@ -1,100 +1,208 @@
 'use client';
-import { useState, useEffect } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+// Disable static prerender
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+import { Suspense, useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, Building, Smartphone, CheckCircle, Clock, Copy } from 'lucide-react';
-import apiService from '../../../services/api';
-import type { Pembelian, PaymentInfo } from '../../../types';
-import Layout from '../../../components/layout';
-import Button from '../../../components/ui/Button';
-import Card from '../../../components/ui/Card';
 import toast from 'react-hot-toast';
-
-const paymentMethods = [
-  { id: 'bca', name: 'BCA Virtual Account', icon: Building },
-  { id: 'bni', name: 'BNI Virtual Account', icon: Building },
-  { id: 'mandiri', name: 'Mandiri Virtual Account', icon: Building },
-  { id: 'gopay', name: 'GoPay', icon: Smartphone },
-  { id: 'ovo', name: 'OVO', icon: Smartphone },
-  { id: 'dana', name: 'DANA', icon: Smartphone },
-];
-
-export default function PaymentPage() {
+import Layout from '../../../components/layout';
+const API = 'https://keretaapi-production.up.railway.app';
+function PaymentContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const id = searchParams.get('id') || '';
-  const [pembelian, setPembelian] = useState<Pembelian | null>(null);
-  const [payment, setPayment] = useState<PaymentInfo | null>(null);
+  
+  const [pembelian, setPembelian] = useState<any>(null);
+  const [payment, setPayment] = useState<any>(null);
   const [selectedMethod, setSelectedMethod] = useState('bca');
   const [isConfirming, setIsConfirming] = useState(false);
-
-  useEffect(() => { if (id) loadData(); }, [id]);
-
+  const [isLoading, setIsLoading] = useState(true);
+  const getToken = () => typeof window !== 'undefined' ? localStorage.getItem('token') || '' : '';
+  useEffect(() => {
+    if (id) loadData();
+  }, [id]);
   const loadData = async () => {
     try {
-      const [pembelianRes, paymentRes] = await Promise.all([apiService.getPembelian(id), apiService.getPayment(id)]);
-      if (pembelianRes.success) setPembelian(pembelianRes.data);
-      if (paymentRes.success) setPayment(paymentRes.data);
-    } catch (err: any) { toast.error('Gagal memuat data'); }
+      const token = getToken();
+      const headers = { 'Authorization': 'Bearer ' + token };
+      
+      const [pembelianRes, paymentRes] = await Promise.all([
+        fetch(API + '/pembelian/' + id, { headers }),
+        fetch(API + '/payment/' + id, { headers })
+      ]);
+      
+      if (pembelianRes.ok) {
+        const data = await pembelianRes.json();
+        setPembelian(data);
+      }
+      if (paymentRes.ok) {
+        const data = await paymentRes.json();
+        setPayment(data);
+      }
+    } catch (err: any) {
+      toast.error('Gagal memuat data');
+    } finally {
+      setIsLoading(false);
+    }
   };
-
   const handleConfirm = async () => {
     if (!id) return;
     setIsConfirming(true);
     try {
-      await apiService.confirmPayment(id);
-      toast.success('Pembayaran berhasil dikonfirmasi!');
-      router.push(`/mybookings/ticket?id=${id}`);
-    } catch (err: any) { toast.error(err.response?.data?.message || 'Gagal konfirmasi'); }
-    finally { setIsConfirming(false); }
+      const token = getToken();
+      const res = await fetch(API + '/payment/' + id + '/confirm', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      if (res.ok) {
+        toast.success('Pembayaran berhasil dikonfirmasi!');
+        router.push('/booking/tiket/' + id);
+      } else {
+        toast.error('Gagal konfirmasi pembayaran');
+      }
+    } catch (err: any) {
+      toast.error('Gagal konfirmasi');
+    } finally {
+      setIsConfirming(false);
+    }
   };
-
-  const handleCopy = (text: string) => { navigator.clipboard.writeText(text); toast.success('Nomor disalin!'); };
-  const formatPrice = (price: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(price);
-
-  if (!pembelian) return <Layout><div className="text-center py-12"><div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-600 border-t-transparent"></div></div></Layout>;
-
+  const handleCopy = (text: string) => {
+    navigator.clipboard.writeText(text);
+    toast.success('Nomor disalin!');
+  };
+  const formatPrice = (price: number) =>
+    new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(price || 0);
+  if (isLoading) {
+    return <div style={{ textAlign: 'center', padding: 64 }}><p>Memuat...</p></div>;
+  }
+  if (!pembelian) {
+    return <div style={{ textAlign: 'center', padding: 64 }}><p>Data tidak ditemukan</p></div>;
+  }
+  return (
+    <div style={{ maxWidth: 800, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <button onClick={() => router.back()} style={{ border: 'none', backgroundColor: 'transparent', cursor: 'pointer', color: '#2563eb', padding: 8 }}>
+          <ArrowLeft style={{ width: 24, height: 24 }} />
+        </button>
+        <div>
+          <h1 style={{ fontSize: 24, fontWeight: 700, color: '#111827' }}>Pembayaran</h1>
+          <p style={{ color: '#6b7280' }}>Kode Booking: {pembelian.kodeBooking}</p>
+        </div>
+      </div>
+      <div style={{ backgroundColor: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 12, padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <Clock style={{ width: 24, height: 24, color: '#ea580c' }} />
+          <div>
+            <p style={{ fontWeight: 500, color: '#9a3412' }}>Selesaikan pembayaran dalam</p>
+          </div>
+        </div>
+        <div style={{ fontSize: 24, fontWeight: 700, color: '#ea580c' }}>00:59:45</div>
+      </div>
+      <div style={{ backgroundColor: '#fff', borderRadius: 12, border: '1px solid #e5e7eb', padding: 24 }}>
+        <h3 style={{ fontWeight: 600, color: '#111827', marginBottom: 16 }}>Ringkasan Pesanan</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: '#6b7280' }}>Kereta</span>
+            <span style={{ fontWeight: 500 }}>{pembelian.jadwal?.kereta?.nama || '-'}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: '#6b7280' }}>Rute</span>
+            <span style={{ fontWeight: 500 }}>{pembelian.jadwal?.asal} → {pembelian.jadwal?.tujuan}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: '#6b7280' }}>Tanggal</span>
+            <span style={{ fontWeight: 500 }}>
+              {pembelian.jadwal?.tanggalBerangkat ? new Date(pembelian.jadwal.tanggalBerangkat).toLocaleDateString('id-ID') : '-'}
+            </span>
+          </div>
+          <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12, display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ fontWeight: 600 }}>Total</span>
+            <span style={{ fontWeight: 700, fontSize: 20, color: '#2563eb' }}>
+              {formatPrice(pembelian.totalHarga || pembelian.total)}
+            </span>
+          </div>
+        </div>
+      </div>
+      <div style={{ backgroundColor: '#fff', borderRadius: 12, border: '1px solid #e5e7eb', padding: 24 }}>
+        <h3 style={{ fontWeight: 600, color: '#111827', marginBottom: 16 }}>Pilih Metode Pembayaran</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+          {[
+            { id: 'bca', name: 'BCA Virtual Account', icon: Building },
+            { id: 'bni', name: 'BNI Virtual Account', icon: Building },
+            { id: 'mandiri', name: 'Mandiri Virtual Account', icon: Building },
+            { id: 'gopay', name: 'GoPay', icon: Smartphone },
+            { id: 'ovo', name: 'OVO', icon: Smartphone },
+            { id: 'dana', name: 'DANA', icon: Smartphone },
+          ].map((m) => (
+            <button
+              key={m.id}
+              onClick={() => setSelectedMethod(m.id)}
+              style={{
+                padding: 16,
+                borderRadius: 12,
+                border: selectedMethod === m.id ? '2px solid #2563eb' : '1px solid #e5e7eb',
+                backgroundColor: selectedMethod === m.id ? '#eff6ff' : '#fff',
+                cursor: 'pointer',
+                textAlign: 'left',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12
+              }}
+            >
+              <div style={{ padding: 8, borderRadius: 8, backgroundColor: selectedMethod === m.id ? '#2563eb' : '#f3f4f6', color: selectedMethod === m.id ? '#fff' : '#6b7280' }}>
+                <m.icon style={{ width: 20, height: 20 }} />
+              </div>
+              <p style={{ fontWeight: 500 }}>{m.name}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div style={{ backgroundColor: '#fff', borderRadius: 12, border: '1px solid #e5e7eb', padding: 24 }}>
+        <h3 style={{ fontWeight: 600, color: '#111827', marginBottom: 16 }}>Instruksi Pembayaran</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ backgroundColor: '#f9fafb', borderRadius: 8, padding: 16 }}>
+            <p style={{ fontSize: 14, color: '#6b7280', marginBottom: 8 }}>Nomor Virtual Account:</p>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <p style={{ fontSize: 24, fontFamily: 'monospace', fontWeight: 700 }}>8888 0123 4567 8901</p>
+              <button onClick={() => handleCopy('8888012345678901')} style={{ padding: 8, color: '#2563eb', backgroundColor: 'transparent', border: 'none', cursor: 'pointer' }}>
+                <Copy style={{ width: 20, height: 20 }} />
+              </button>
+            </div>
+          </div>
+          <button
+            onClick={handleConfirm}
+            disabled={isConfirming}
+            style={{
+              width: '100%',
+              padding: 12,
+              backgroundColor: isConfirming ? '#93c5fd' : '#2563eb',
+              color: '#fff',
+              borderRadius: 8,
+              fontWeight: 600,
+              border: 'none',
+              cursor: isConfirming ? 'not-allowed' : 'pointer',
+              fontSize: 14,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8
+            }}
+          >
+            <CheckCircle style={{ width: 20, height: 20 }} />
+            {isConfirming ? 'Memproses...' : 'Saya Sudah Membayar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+export default function PaymentPage() {
   return (
     <Layout>
-      <div className="max-w-3xl mx-auto space-y-6">
-        <div className="flex items-center space-x-4">
-          <Button variant="ghost" onClick={() => router.back()}><ArrowLeft className="h-5 w-5" /></Button>
-          <div><h1 className="text-2xl font-bold">Pembayaran</h1><p className="text-gray-600">Kode Booking: {pembelian.kodeBooking}</p></div>
-        </div>
-        <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 flex items-center justify-between">
-          <div className="flex items-center space-x-3"><Clock className="h-6 w-6 text-orange-600" /><div><p className="font-medium text-orange-900">Selesaikan pembayaran dalam</p></div></div>
-          <div className="text-2xl font-bold text-orange-600">00:59:45</div>
-        </div>
-        <Card title="Ringkasan Pesanan">
-          <div className="space-y-3">
-            <div className="flex justify-between"><span className="text-gray-600">Kereta</span><span className="font-medium">{pembelian.jadwal.kereta.nama}</span></div>
-            <div className="flex justify-between"><span className="text-gray-600">Rute</span><span className="font-medium">{pembelian.jadwal.asal} → {pembelian.jadwal.tujuan}</span></div>
-            <div className="flex justify-between"><span className="text-gray-600">Tanggal</span><span className="font-medium">{new Date(pembelian.jadwal.tanggal).toLocaleDateString('id-ID')}</span></div>
-            <div className="flex justify-between"><span className="text-gray-600">Kursi</span><span className="font-medium">{pembelian.kursis?.map(k => k.nomor).join(', ') || '-'}</span></div>
-            <div className="border-t pt-3 flex justify-between"><span className="font-semibold">Total</span><span className="font-bold text-xl text-blue-600">{formatPrice(pembelian.totalHarga)}</span></div>
-          </div>
-        </Card>
-        <Card title="Pilih Metode Pembayaran">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {paymentMethods.map((m) => (
-              <button key={m.id} onClick={() => setSelectedMethod(m.id)} className={`p-4 rounded-xl border-2 text-left transition-all ${selectedMethod === m.id ? 'border-blue-600 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}>
-                <div className="flex items-center space-x-3"><div className={`p-2 rounded-lg ${selectedMethod === m.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}><m.icon className="h-5 w-5" /></div><p className="font-medium">{m.name}</p></div>
-              </button>
-            ))}
-          </div>
-        </Card>
-        <Card title="Instruksi Pembayaran">
-          <div className="space-y-4">
-            <div className="bg-gray-50 rounded-lg p-4">
-              <p className="text-sm text-gray-600 mb-2">Nomor Virtual Account:</p>
-              <div className="flex items-center justify-between">
-                <p className="text-2xl font-mono font-bold">8888 0123 4567 8901</p>
-                <button onClick={() => handleCopy('8888012345678901')} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"><Copy className="h-5 w-5" /></button>
-              </div>
-            </div>
-            <Button onClick={handleConfirm} isLoading={isConfirming} className="w-full" size="lg"><CheckCircle className="h-5 w-5 mr-2" />Saya Sudah Membayar</Button>
-          </div>
-        </Card>
-      </div>
+      <Suspense fallback={<div style={{ textAlign: 'center', padding: 64 }}><p>Memuat...</p></div>}>
+        <PaymentContent />
+      </Suspense>
     </Layout>
   );
 }
